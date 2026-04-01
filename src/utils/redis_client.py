@@ -1,5 +1,7 @@
 """Redis client singleton."""
 
+from __future__ import annotations
+
 import redis
 
 
@@ -18,6 +20,5 @@ def get_redis(config: dict = None) -> redis.Redis:
             decode_responses=True,
             socket_keepalive=True,
             socket_connect_timeout=5,
-            retry_on_timeout=True,
         )
     return _client
