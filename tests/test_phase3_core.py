@@ -30,7 +30,7 @@ from src.exchanges.base import (
 from src.storage import Database, PairRepository, JournalRepository
 from src.core.pair_manager import PairManager
 from src.core.trading_brain import TradingBrain, uuid_token
-from src.utils.constants import REDIS_MT5_HEARTBEAT
+from src.utils.constants import REDIS_MT5_HEARTBEAT, REDIS_MT5_ORDER_QUEUE
 
 
 # ═══════════════════════════════════════════════════════════
@@ -157,6 +157,7 @@ class MockExchange:
         self._tick = None
         self._connected = True
         self._auth_alive = True
+        self.auth_check_calls = 0
         self._tick_callback = None
 
     def set_tick_callback(self, cb):
@@ -180,6 +181,7 @@ class MockExchange:
         pass
 
     async def check_auth_alive(self):
+        self.auth_check_calls += 1
         return self._auth_alive
 
     async def place_order(self, side, volume):
@@ -729,6 +731,17 @@ def test_detect_signal_close():
     print("[OK] _detect_signal() -> CLOSE")
 
 
+def test_detect_signal_close_on_opposite_band():
+    brain, _, _, _, pm = _make_brain(dev_close=-0.05)
+    _create_open_pair(pm)
+    mt5 = {"bid": 2950.00, "ask": 2950.10}
+    exch = {"bid": 2949.90, "ask": 2950.00}
+    spread = brain._calculate_spread(mt5, exch)  # 0.10
+    signal = brain._detect_signal(spread)
+    assert signal == "CLOSE"
+    print("[OK] _detect_signal() -> CLOSE on opposite band")
+
+
 def test_detect_signal_none():
     brain, _, _, _, _ = _make_brain()
     # Within thresholds, no pair -> NONE
@@ -750,6 +763,38 @@ def test_detect_signal_open_pair_blocks_entry():
     signal = brain._detect_signal(spread)
     assert signal == "NONE"  # not ENTRY_SHORT, because pair exists and spread > dev_close
     print("[OK] _detect_signal() -- open pair blocks new entry")
+
+
+def test_execute_entry_auth_dead_blocks_order_dispatch():
+    brain, _, redis, exchange, pm = _make_brain()
+    exchange._auth_alive = False
+    now = time.time()
+    brain._latest_mt5 = {"bid": 2949.0, "ask": 2950.0, "local_ts": now, "time_msc": 1}
+    brain._latest_exchange = {"bid": 2950.0, "ask": 2951.0, "local_ts": now, "ts": 1}
+
+    async def _run():
+        await brain._execute_entry(direction="LONG")
+
+    asyncio.run(_run())
+
+    assert pm.pair_count == 0
+    assert redis._lists.get(REDIS_MT5_ORDER_QUEUE, []) == []
+    assert brain._risk_flag is True
+    assert brain._risk_reason == "exchange_auth_dead"
+    print("[OK] _execute_entry() blocks new entry when exchange auth is dead")
+
+
+def test_entry_auth_uses_fresh_cache_without_extra_ping():
+    brain, _, _, exchange, _ = _make_brain()
+    brain._record_auth_check(True)
+    exchange._auth_alive = False
+
+    async def _run():
+        return await brain._ensure_exchange_auth_for_entry()
+
+    assert asyncio.run(_run()) is True
+    assert exchange.auth_check_calls == 0
+    print("[OK] entry auth uses fresh cache without extra ping")
 
 
 def test_is_data_fresh():
@@ -972,6 +1017,8 @@ ALL_TESTS = [
     test_detect_signal_close,
     test_detect_signal_none,
     test_detect_signal_open_pair_blocks_entry,
+    test_execute_entry_auth_dead_blocks_order_dispatch,
+    test_entry_auth_uses_fresh_cache_without_extra_ping,
     test_is_data_fresh,
     test_gate_abort_missing_ticks,
     test_gate_abort_signal_changed,

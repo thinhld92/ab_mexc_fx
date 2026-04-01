@@ -11,7 +11,6 @@
       },
       "exchange": {
         "symbol": "XAUT_USDT",
-        "contract_size": 0.001,
         "volume": 1000,
         "volume_min": 1,
         "volume_step": 1,
@@ -42,8 +41,8 @@
         "leverage": 10
       },
       "arbitrage": {
-        "deviation_entry": 20.0,
-        "deviation_close": 5.0,
+        "deviation_entry": 25.0,
+        "deviation_close": -25.0,
         "pivot_ema_minutes": 15,
         "warmup_pivot": -20.0,
         "allow_entry_during_warmup": true
@@ -65,12 +64,10 @@
   "exchange": {
     "name": "mexc",
     "symbol": "XAUT_USDT",
-    "contract_size": 0.001,
     "volume": 1000,
     "volume_min": 1,
     "volume_step": 1,
     "leverage": 10,
-    "margin_mode": 1,
     "web_token": "WEB..."
   },
 
@@ -99,6 +96,7 @@
     "alert_equity_mt5": 500,
     "orphan_max_count": 3,
     "orphan_cooldown_sec": 900,
+    "auth_cache_ttl_sec": 2.0,
     "auth_check_interval_sec": 300
   },
 

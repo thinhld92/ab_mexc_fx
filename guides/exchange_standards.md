@@ -165,7 +165,7 @@ class MarginMode(IntEnum):
 ```
 
 **Quy tắc:**
-- Config chỉ lưu `margin_mode` (int) + `leverage` (int)
+- Config hien chi can `leverage`; margin mode dang dung mac dinh cua handler
 - Exchange handler tự set leverage + margin mode khi connect
 - Nếu sàn không hỗ trợ mode đã chọn → log warning, dùng default của sàn
 
@@ -307,4 +307,5 @@ class ExchangeHandler(ABC):
     @property
     def exchange_name(self) -> str  # "mexc", "okx", "binance"
 ```
+
 

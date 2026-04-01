@@ -63,6 +63,8 @@ class TradingBrain:
         self._pivot_last_ts = 0.0
         self._orphan_seen_tokens: set[str] = set()
         self._orphan_cooldown_until = 0.0
+        self._auth_last_checked_at = 0.0
+        self._auth_last_alive: bool | None = None
 
         self._max_orders = max(0, min(int(self.config.max_orders), 1))
         if self.config.max_orders > 1:
@@ -194,6 +196,7 @@ class TradingBrain:
             while not self.shutdown_event.is_set():
                 await asyncio.sleep(interval)
                 alive = await self.exchange.check_auth_alive()
+                self._record_auth_check(alive)
                 if alive:
                     continue
                 self._trip_risk("exchange_auth_dead", "Exchange auth check failed; risk latch enabled")
@@ -443,6 +446,8 @@ class TradingBrain:
             return
         if not self._latest_mt5 or not self._latest_exchange:
             return
+        if not await self._ensure_exchange_auth_for_entry():
+            return
 
         spread = self._calculate_spread(self._latest_mt5, self._latest_exchange)
         if direction == "LONG":
@@ -488,6 +493,36 @@ class TradingBrain:
             log("SUCCESS", "BRAIN", "Entry complete", pair=pair.pair_token, direction=direction)
         else:
             log("WARN", "BRAIN", "Entry ended non-terminal/partial", pair=pair.pair_token, status=updated.status.value)
+
+    async def _ensure_exchange_auth_for_entry(self) -> bool:
+        if self._risk_flag:
+            return False
+
+        ttl_sec = max(float(getattr(self.config, "auth_cache_ttl_sec", 2.0) or 0.0), 0.0)
+        cache_age = time.time() - self._auth_last_checked_at
+        if (
+            self._auth_last_checked_at > 0.0
+            and self._auth_last_alive is not None
+            and cache_age <= ttl_sec
+        ):
+            return bool(self._auth_last_alive)
+
+        try:
+            alive = await self.exchange.check_auth_alive()
+        except Exception as exc:
+            self._trip_risk(
+                "exchange_auth_dead",
+                "Exchange auth preflight failed; entry blocked",
+                error=str(exc),
+            )
+            return False
+
+        self._record_auth_check(alive)
+        if alive:
+            return True
+
+        self._trip_risk("exchange_auth_dead", "Exchange auth preflight failed; entry blocked")
+        return False
 
     async def _execute_close(
         self,
@@ -584,7 +619,7 @@ class TradingBrain:
 
     async def _safe_exchange_order(self, side: OrderSide, volume: int | float) -> OrderResult:
         try:
-            return await self.exchange.place_order(side, volume)
+            result = await self.exchange.place_order(side, volume)
         except Exception as exc:
             log("ERROR", "BRAIN", f"Exchange place_order crashed: {exc}")
             return OrderResult(
@@ -593,6 +628,9 @@ class TradingBrain:
                 error=str(exc),
                 error_category=ErrorCategory.UNKNOWN,
             )
+        if result.error_category == ErrorCategory.AUTH_EXPIRED:
+            self._trip_risk("exchange_auth_dead", "Exchange order rejected due to auth failure; risk latch enabled")
+        return result
 
     def _trip_risk(self, reason: str, message: str, **context) -> None:
         already_set = self._risk_flag and self._risk_reason == reason
@@ -601,6 +639,11 @@ class TradingBrain:
         self._cancel_debounce()
         if not already_set:
             log("ERROR", "BRAIN", message, reason=reason, **context)
+
+    def _record_auth_check(self, alive: bool, *, checked_at: float | None = None) -> None:
+        ts = time.time() if checked_at is None else float(checked_at)
+        self._auth_last_checked_at = ts
+        self._auth_last_alive = bool(alive)
 
     def _observe_pair_update(self, pair) -> None:
         if pair is None:
@@ -633,12 +676,25 @@ class TradingBrain:
                 limit=orphan_max_count,
             )
 
+    def _should_close_open_pair(self, gap: float, direction: str | None) -> bool:
+        close_threshold = float(self.config.dev_close)
+        if close_threshold >= 0.0:
+            return abs(gap) < close_threshold
+
+        opposite_threshold = abs(close_threshold)
+        direction_name = str(direction or "").upper()
+        if direction_name == "LONG":
+            return gap >= opposite_threshold
+        if direction_name == "SHORT":
+            return gap <= -opposite_threshold
+        return False
+
     def _detect_signal(self, spread: float, *, pivot: float = 0.0) -> str:
         gap = spread - pivot
         open_pair = self.pair_manager.get_open_pair()
-        if open_pair is not None and abs(gap) < self.config.dev_close:
-            return "CLOSE"
         if open_pair is not None:
+            if self._should_close_open_pair(gap, getattr(open_pair, "direction", None)):
+                return "CLOSE"
             return "NONE"
         if gap > self.config.dev_entry:
             return "ENTRY_SHORT"

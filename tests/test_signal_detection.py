@@ -141,12 +141,24 @@ def test_close_signal_for_open_pair():
     print("[OK] close signal from open pair")
 
 
+def test_close_signal_can_use_opposite_band():
+    long_brain = _brain(DummyPairManager(direction="LONG"), dev_close=-0.25)
+    short_brain = _brain(DummyPairManager(direction="SHORT"), dev_close=-0.25)
+    assert long_brain._detect_signal(0.26) == "CLOSE"
+    assert long_brain._detect_signal(0.10) == "NONE"
+    assert short_brain._detect_signal(-0.26) == "CLOSE"
+    assert short_brain._detect_signal(-0.10) == "NONE"
+    print("[OK] negative dev_close uses opposite-side close band")
+
+
 def test_signal_detection_respects_configured_pivot():
     brain = _brain()
     assert brain._detect_signal(-19.70, pivot=-20.0) == "ENTRY_SHORT"
     assert brain._detect_signal(-20.30, pivot=-20.0) == "ENTRY_LONG"
     close_brain = _brain(DummyPairManager(direction="LONG"))
     assert close_brain._detect_signal(-20.01, pivot=-20.0) == "CLOSE"
+    opposite_close_brain = _brain(DummyPairManager(direction="LONG"), dev_close=-0.25)
+    assert opposite_close_brain._detect_signal(-19.74, pivot=-20.0) == "CLOSE"
     print("[OK] signal detection uses pivot-centered thresholds")
 
 
@@ -201,6 +213,7 @@ def test_warmup_completion_requires_min_ticks():
 if __name__ == "__main__":
     test_entry_signals_and_regression_bid_ask_shape()
     test_close_signal_for_open_pair()
+    test_close_signal_can_use_opposite_band()
     test_signal_detection_respects_configured_pivot()
     test_current_pivot_uses_warmup_fallback_until_ready()
     test_entry_allowed_during_warmup_is_configurable()

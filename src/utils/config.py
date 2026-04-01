@@ -246,6 +246,10 @@ class Config:
         return self.safety.get("auth_check_interval_sec", 300)
 
     @property
+    def auth_cache_ttl_sec(self) -> float:
+        return float(self.safety.get("auth_cache_ttl_sec", 2.0))
+
+    @property
     def mt5_volume(self) -> float:
         return self.mt5.get("volume", 0.01)
 

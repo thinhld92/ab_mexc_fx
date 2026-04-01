@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import sys
+import time
 
 from ..exchanges import create_exchange
 from ..storage import Database, JournalRepository, PairRepository
@@ -53,6 +54,7 @@ class CoreEngine:
             auth_ok = await self.exchange.check_auth_alive()
             if not auth_ok:
                 raise RuntimeError("Exchange auth check failed during startup")
+            self.brain._record_auth_check(auth_ok, checked_at=time.time())
 
             self._exchange_task = asyncio.create_task(self.exchange.run_ws(), name="exchange-ws")
             self._brain_task = asyncio.create_task(self.brain.run(), name="trading-brain")
