@@ -43,6 +43,7 @@ class OrderWorker(threading.Thread):
         self.order_count = 0
         self.recovered_count = 0
         self.position_query_count = 0
+        self._resolved_filling_mode: int | None = None
 
     @staticmethod
     def serialize_positions(positions: list[Any] | tuple[Any, ...], *, magic: int = MT5_MAGIC) -> list[dict]:
@@ -294,9 +295,8 @@ class OrderWorker(threading.Thread):
                 "magic": self._magic,
                 "comment": comment,
                 "type_time": self._mt5.ORDER_TIME_GTC,
-                "type_filling": self._mt5.ORDER_FILLING_IOC,
             }
-            result = self._mt5.order_send(request)
+            result = self._send_with_supported_filling_locked(request)
 
         if result is None:
             return {"success": False, "error": str(self._mt5.last_error())}
@@ -353,9 +353,8 @@ class OrderWorker(threading.Thread):
                 "magic": self._magic,
                 "comment": "arb_close",
                 "type_time": self._mt5.ORDER_TIME_GTC,
-                "type_filling": self._mt5.ORDER_FILLING_IOC,
             }
-            result = self._mt5.order_send(request)
+            result = self._send_with_supported_filling_locked(request)
 
         if result is None:
             return {"success": False, "error": str(self._mt5.last_error())}
@@ -383,6 +382,121 @@ class OrderWorker(threading.Thread):
         if not deals:
             return 0.0
         return float(sum(float(getattr(deal, "profit", 0.0)) for deal in deals))
+
+    def _send_with_supported_filling_locked(self, request: dict) -> Any:
+        last_result = None
+
+        for filling_mode in self._candidate_filling_modes_locked():
+            payload = dict(request)
+            payload["type_filling"] = filling_mode
+            result = self._mt5.order_send(payload)
+            last_result = result
+
+            if result is None:
+                return None
+
+            if int(getattr(result, "retcode", 0)) == self._mt5.TRADE_RETCODE_DONE:
+                if self._resolved_filling_mode != filling_mode:
+                    self._resolved_filling_mode = filling_mode
+                    log(
+                        "INFO",
+                        "MT5O",
+                        "Resolved MT5 filling mode",
+                        symbol=self._symbol,
+                        filling=self._describe_filling_mode(filling_mode),
+                    )
+                return result
+
+            if self._is_invalid_filling_result(result):
+                log(
+                    "WARN",
+                    "MT5O",
+                    "MT5 rejected filling mode, retrying",
+                    symbol=self._symbol,
+                    filling=self._describe_filling_mode(filling_mode),
+                    retcode=int(getattr(result, "retcode", 0)),
+                    comment=str(getattr(result, "comment", "")),
+                )
+                continue
+
+            return result
+
+        return last_result
+
+    def _candidate_filling_modes_locked(self) -> list[int]:
+        candidates: list[int] = []
+
+        def push(mode: Any) -> None:
+            if mode is None:
+                return
+            try:
+                normalized = int(mode)
+            except (TypeError, ValueError):
+                return
+            if normalized not in candidates:
+                candidates.append(normalized)
+
+        push(self._resolved_filling_mode)
+
+        symbol_info_getter = getattr(self._mt5, "symbol_info", None)
+        symbol_info = symbol_info_getter(self._symbol) if callable(symbol_info_getter) else None
+        filling_flags = int(getattr(symbol_info, "filling_mode", 0) or 0)
+        execution_mode = getattr(symbol_info, "trade_exemode", getattr(symbol_info, "trade_execution", None))
+
+        order_fok = getattr(self._mt5, "ORDER_FILLING_FOK", None)
+        order_ioc = getattr(self._mt5, "ORDER_FILLING_IOC", None)
+        order_return = getattr(self._mt5, "ORDER_FILLING_RETURN", None)
+
+        flag_fok = int(getattr(self._mt5, "SYMBOL_FILLING_FOK", 1))
+        flag_ioc = int(getattr(self._mt5, "SYMBOL_FILLING_IOC", 2))
+
+        exec_market = getattr(self._mt5, "SYMBOL_TRADE_EXECUTION_MARKET", None)
+        exec_instant = getattr(self._mt5, "SYMBOL_TRADE_EXECUTION_INSTANT", None)
+        exec_request = getattr(self._mt5, "SYMBOL_TRADE_EXECUTION_REQUEST", None)
+        exec_exchange = getattr(self._mt5, "SYMBOL_TRADE_EXECUTION_EXCHANGE", None)
+
+        if execution_mode == exec_market:
+            if filling_flags & flag_fok:
+                push(order_fok)
+            if filling_flags & flag_ioc:
+                push(order_ioc)
+        elif execution_mode in {exec_instant, exec_request}:
+            push(order_return)
+            push(order_fok)
+            push(order_ioc)
+        elif execution_mode == exec_exchange:
+            push(order_return)
+            if filling_flags & flag_fok:
+                push(order_fok)
+            if filling_flags & flag_ioc:
+                push(order_ioc)
+        else:
+            if filling_flags & flag_fok:
+                push(order_fok)
+            if filling_flags & flag_ioc:
+                push(order_ioc)
+            push(order_return)
+            push(order_fok)
+            push(order_ioc)
+
+        return candidates
+
+    def _is_invalid_filling_result(self, result: Any) -> bool:
+        retcode = int(getattr(result, "retcode", 0) or 0)
+        invalid_fill_retcode = int(getattr(self._mt5, "TRADE_RETCODE_INVALID_FILL", 10030))
+        if retcode == invalid_fill_retcode:
+            return True
+
+        comment = str(getattr(result, "comment", "")).lower()
+        return "fill" in comment and ("unsupported" in comment or "invalid" in comment)
+
+    def _describe_filling_mode(self, filling_mode: int) -> str:
+        names = {
+            getattr(self._mt5, "ORDER_FILLING_FOK", None): "FOK",
+            getattr(self._mt5, "ORDER_FILLING_IOC", None): "IOC",
+            getattr(self._mt5, "ORDER_FILLING_RETURN", None): "RETURN",
+        }
+        return names.get(filling_mode, str(filling_mode))
 
     def _push_result(self, result: dict) -> None:
         self._redis.lpush(

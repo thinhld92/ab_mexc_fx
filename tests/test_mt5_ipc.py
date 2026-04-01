@@ -42,24 +42,51 @@ from src.utils.constants import (
 class MockMT5:
     """In-memory mock of the MetaTrader5 module."""
 
+    ORDER_FILLING_FOK = 0
     ORDER_TYPE_BUY = 0
     ORDER_TYPE_SELL = 1
     TRADE_ACTION_DEAL = 1
     ORDER_TIME_GTC = 0
     ORDER_FILLING_IOC = 1
+    ORDER_FILLING_RETURN = 2
     TRADE_RETCODE_DONE = 10009
+    TRADE_RETCODE_INVALID_FILL = 10030
+    SYMBOL_FILLING_FOK = 1
+    SYMBOL_FILLING_IOC = 2
+    SYMBOL_TRADE_EXECUTION_INSTANT = 0
+    SYMBOL_TRADE_EXECUTION_REQUEST = 1
+    SYMBOL_TRADE_EXECUTION_MARKET = 2
+    SYMBOL_TRADE_EXECUTION_EXCHANGE = 3
 
     def __init__(self):
         self._positions: dict[int, SimpleNamespace] = {}
         self._tick = SimpleNamespace(bid=3245.50, ask=3245.80, last=3245.65, time_msc=1000)
         self._connected = True
         self._next_ticket = 100000
+        self._symbol_info = SimpleNamespace(
+            filling_mode=self.SYMBOL_FILLING_IOC,
+            trade_exemode=self.SYMBOL_TRADE_EXECUTION_MARKET,
+        )
+        self._supported_filling_modes = {self.ORDER_FILLING_IOC}
+        self.last_request = None
 
     def symbol_info_tick(self, symbol: str):
         return self._tick
 
+    def symbol_info(self, symbol: str):
+        return self._symbol_info
+
     def set_tick(self, bid, ask, last, time_msc):
         self._tick = SimpleNamespace(bid=bid, ask=ask, last=last, time_msc=time_msc)
+
+    def set_symbol_info(self, *, filling_mode=None, trade_exemode=None):
+        if filling_mode is not None:
+            self._symbol_info.filling_mode = filling_mode
+        if trade_exemode is not None:
+            self._symbol_info.trade_exemode = trade_exemode
+
+    def set_supported_filling_modes(self, *modes):
+        self._supported_filling_modes = set(modes)
 
     def positions_get(self, *, ticket: int = None, symbol: str = None):
         if ticket is not None:
@@ -80,6 +107,14 @@ class MockMT5:
         self._positions.pop(ticket, None)
 
     def order_send(self, request):
+        self.last_request = dict(request)
+        if request.get("type_filling") not in self._supported_filling_modes:
+            return SimpleNamespace(
+                retcode=self.TRADE_RETCODE_INVALID_FILL,
+                order=0,
+                price=request.get("price", 0.0),
+                comment="Unsupported filling mode",
+            )
         action_type = request.get("type")
         ticket = request.get("position")
         if ticket:
@@ -478,6 +513,39 @@ def test_execute_close():
     print("[OK] _execute_command CLOSE success")
 
 
+def test_execute_open_selects_supported_market_filling_mode():
+    mt5 = MockMT5()
+    mt5.set_symbol_info(
+        filling_mode=mt5.SYMBOL_FILLING_FOK,
+        trade_exemode=mt5.SYMBOL_TRADE_EXECUTION_MARKET,
+    )
+    mt5.set_supported_filling_modes(mt5.ORDER_FILLING_FOK)
+    worker = _make_order_worker(mt5_api=mt5)
+
+    result = worker._execute_command({"action": "BUY", "volume": 0.01, "job_id": "j_fill_open"})
+
+    assert result["success"] is True
+    assert mt5.last_request["type_filling"] == mt5.ORDER_FILLING_FOK
+    print("[OK] _execute_command BUY picks broker-supported market fill mode")
+
+
+def test_execute_close_uses_return_when_exchange_execution_allows_it():
+    mt5 = MockMT5()
+    mt5.add_position(66666, type_=0, volume=0.01, price=3245.0)
+    mt5.set_symbol_info(
+        filling_mode=0,
+        trade_exemode=mt5.SYMBOL_TRADE_EXECUTION_EXCHANGE,
+    )
+    mt5.set_supported_filling_modes(mt5.ORDER_FILLING_RETURN)
+    worker = _make_order_worker(mt5_api=mt5)
+
+    result = worker._execute_command({"action": "CLOSE", "ticket": 66666, "volume": 0.01, "job_id": "j_fill_close"})
+
+    assert result["success"] is True
+    assert mt5.last_request["type_filling"] == mt5.ORDER_FILLING_RETURN
+    print("[OK] _execute_command CLOSE reuses supported fill mode")
+
+
 def test_execute_close_missing_position():
     mt5 = MockMT5()
     worker = _make_order_worker(mt5_api=mt5)
@@ -847,6 +915,8 @@ if __name__ == "__main__":
         test_execute_open_buy,
         test_execute_open_sell,
         test_execute_close,
+        test_execute_open_selects_supported_market_filling_mode,
+        test_execute_close_uses_return_when_exchange_execution_allows_it,
         test_execute_close_missing_position,
         test_execute_close_no_ticket,
         test_execute_unknown_action,
