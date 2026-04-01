@@ -1,0 +1,48 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Test and tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage/
+htmlcov/
+.tmp_tests/
+
+# Runtime data
+logs/
+data/*.db
+data/*.db-*
+data/*.sqlite
+data/*.sqlite3
+data/spread_*.csv
+sim_results.txt
+
+# Local machine / IDE files
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# Local config overrides
+config.json
+config.local.json
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Scratch files
+tmp*.txt
+
+# Local token test scripts
+test_mexc_token.py

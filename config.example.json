@@ -1,0 +1,140 @@
+{
+  "vps_name": "VPS-01",
+  "product": "xau",
+
+  "products": {
+    "xau": {
+      "label": "Gold / XAU",
+      "mt5": {
+        "symbol": "XAUUSD",
+        "volume": 0.01
+      },
+      "exchange": {
+        "symbol": "XAUT_USDT",
+        "contract_size": 0.001,
+        "volume": 1000,
+        "volume_min": 1,
+        "volume_step": 1,
+        "leverage": 10
+      },
+      "arbitrage": {
+        "deviation_entry": 0.15,
+        "deviation_close": 0.05,
+        "pivot_ema_minutes": 15,
+        "warmup_pivot": -20.0,
+        "allow_entry_during_warmup": true
+      }
+    },
+    "btc": {
+      "label": "Bitcoin / BTC",
+      "database": {
+        "path": "data/arb_btc.db"
+      },
+      "mt5": {
+        "symbol": "BTCUSD",
+        "volume": 0.01
+      },
+      "exchange": {
+        "symbol": "BTC_USDT",
+        "volume": 1,
+        "volume_min": 1,
+        "volume_step": 1,
+        "leverage": 10
+      },
+      "arbitrage": {
+        "deviation_entry": 20.0,
+        "deviation_close": 5.0,
+        "pivot_ema_minutes": 15,
+        "warmup_pivot": -20.0,
+        "allow_entry_during_warmup": true
+      }
+    }
+  },
+
+  "redis": { "host": "localhost", "port": 6379, "db": 0 },
+
+  "mt5": {
+    "terminal_path": "C:\\Program Files\\MetaTrader 5\\terminal64.exe",
+    "login": 12345678,
+    "password": "your_password",
+    "server": "Broker-Server",
+    "symbol": "XAUUSD",
+    "volume": 0.01
+  },
+
+  "exchange": {
+    "name": "mexc",
+    "symbol": "XAUT_USDT",
+    "contract_size": 0.001,
+    "volume": 1000,
+    "volume_min": 1,
+    "volume_step": 1,
+    "leverage": 10,
+    "margin_mode": 1,
+    "web_token": "WEB..."
+  },
+
+  "arbitrage": {
+    "deviation_entry": 0.15,
+    "deviation_close": 0.05,
+    "pivot_ema_minutes": 15,
+    "warmup_pivot": -20.0,
+    "allow_entry_during_warmup": true,
+    "stable_time_ms": 300,
+    "cooldown_entry_sec": 60,
+    "cooldown_close_sec": 3,
+    "max_orders": 2,
+    "hold_time_sec": 240
+  },
+
+  "brain": {
+    "warmup_sec": 300,
+    "warmup_min_ticks": 500,
+    "heartbeat_interval_sec": 10,
+    "log_interval_sec": 5
+  },
+
+  "safety": {
+    "max_tick_delay_sec": 10.0,
+    "alert_equity_mt5": 500,
+    "orphan_max_count": 3,
+    "orphan_cooldown_sec": 900,
+    "auth_check_interval_sec": 300
+  },
+
+  "schedule": {
+    "trading_hours": ["00:10-12:00", "16:02-19:30"],
+    "force_close_hours": ["20:15-20:20"]
+  },
+
+  "database": { "path": "data/arb.db" },
+
+  "reconciler": {
+    "interval_sec": 30,
+    "auto_heal": true,
+    "ghost_action": "alert",
+    "alert_telegram": true,
+    "thresholds": {
+      "stale_entry_sec": 60,
+      "stale_close_sec": 120,
+      "stale_healing_sec": 300
+    }
+  },
+
+  "watchdog": {
+    "check_interval_sec": 5,
+    "max_restarts": 3,
+    "restart_window_sec": 300
+  },
+
+  "shutdown": {
+    "on_shutdown_positions": "leave",
+    "grace_period_sec": 30
+  },
+
+  "telegram": {
+    "enable": false,
+    "bot_token": "",
+    "chat_id": ""
+  }
+}

@@ -1,0 +1,5 @@
+MetaTrader5>=5.0.45
+aiohttp>=3.9.0
+orjson>=3.9.0
+redis>=5.0.0
+requests>=2.31.0
